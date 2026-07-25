@@ -1,0 +1,57 @@
+stages:
+  # - lint
+  # - build
+  - push
+  - deploy
+
+variables:
+  NODE_VERSION: 18.14.2
+
+# before_script:
+#   - export SHELL=/bin/bash
+#   - corepack enable
+#   - corepack prepare pnpm@latest --activate
+#   - pnpm install
+
+# lint: 
+#   stage: lint
+#   image: node:$NODE_VERSION
+#   script: 
+#     - pnpm run format
+
+# build-ts:
+#   stage: build
+#   image: node:$NODE_VERSION
+#   script:
+#     - pnpm run build
+#     - pnpm run type-check
+#   only:
+#     - merge_requests
+#     - main
+
+
+push:
+  stage: push
+  image: docker:27.5.1
+  services:
+    - docker:27.5.1-dind
+  script:
+    - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+    - docker build -t $DOCKER_USERNAME/tg-web-app:$CI_COMMIT_SHA -t $DOCKER_USERNAME/tg-web-app:latest .
+    - docker push $DOCKER_USERNAME/tg-web-app:$CI_COMMIT_SHA
+    - docker push $DOCKER_USERNAME/tg-web-app:latest
+
+deploy:
+  stage: deploy
+  image: ubuntu:latest
+  before_script:
+    - 'which ssh-agent || ( apt-get update -y && apt-get install openssh-client -y )'  # Install ssh-client
+    - mkdir -p ~/.ssh
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | ssh-add -  # Add the private key
+    - '[[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
+  script:
+    - ssh-add <(echo "$SSH_PRIVATE_KEY")  # Add the key
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP << 'EOF'
+        kubectl set image deployment/tg-web-app-deployment tg-web-app=$DOCKER_USERNAME/tg-web-app:$CI_COMMIT_SHA --record
+      EOF
